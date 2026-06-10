@@ -147,30 +147,42 @@
         }
 
         function initAudio() {
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            } catch (error) {
+                console.error('Failed to create audio context:', error);
+                return;
+            }
             
             // Resume audio context on user interaction (browser requirement)
             const resumeAudio = () => {
-                if (audioContext.state === 'suspended') {
-                    audioContext.resume();
+                if (audioContext && audioContext.state === 'suspended') {
+                    audioContext.resume().catch(err => {
+                        console.error('Failed to resume audio context:', err);
+                    });
                 }
             };
-            document.addEventListener('click', resumeAudio);
-            document.addEventListener('touchstart', resumeAudio);
+            document.addEventListener('click', resumeAudio, false);
+            document.addEventListener('touchstart', resumeAudio, false);
 
             // Handle focus/blur and visibility changes to gracefully pause audio and animations
             document.addEventListener('visibilitychange', () => {
+                if (!audioContext) return;
                 if (document.hidden) {
                     // Page is hidden/minimized - suspend audio and pause animations
                     isWindowActive = false;
                     if (audioContext.state === 'running') {
-                        audioContext.suspend();
+                        audioContext.suspend().catch(err => {
+                            console.error('Failed to suspend audio context:', err);
+                        });
                     }
                 } else {
                     // Page is visible/restored - resume audio and animations
                     isWindowActive = true;
                     if (audioContext.state === 'suspended') {
-                        audioContext.resume();
+                        audioContext.resume().catch(err => {
+                            console.error('Failed to resume audio context:', err);
+                        });
                     }
                 }
             });
@@ -178,16 +190,20 @@
             window.addEventListener('blur', () => {
                 // Window lost focus
                 isWindowActive = false;
-                if (audioContext.state === 'running') {
-                    audioContext.suspend();
+                if (audioContext && audioContext.state === 'running') {
+                    audioContext.suspend().catch(err => {
+                        console.error('Failed to suspend audio context:', err);
+                    });
                 }
             });
 
             window.addEventListener('focus', () => {
                 // Window regained focus
                 isWindowActive = true;
-                if (audioContext.state === 'suspended') {
-                    audioContext.resume();
+                if (audioContext && audioContext.state === 'suspended') {
+                    audioContext.resume().catch(err => {
+                        console.error('Failed to resume audio context:', err);
+                    });
                 }
             });
 
