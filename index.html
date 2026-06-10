@@ -70,6 +70,7 @@
         let previousMousePosition = { x: 0, y: 0 };
         let audioContext = null;
         let isWindowActive = true;
+        let windNodes = null;
 
         init();
         animate();
@@ -147,110 +148,127 @@
         }
 
         function initAudio() {
-            try {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            } catch (error) {
-                console.error('Failed to create audio context:', error);
-                return;
-            }
-            
-            // Resume audio context on user interaction (browser requirement)
-            const resumeAudio = () => {
-                if (audioContext && audioContext.state === 'suspended') {
-                    audioContext.resume().catch(err => {
-                        console.error('Failed to resume audio context:', err);
-                    });
+            // Don't create AudioContext yet — wait for first user gesture
+            const startAudio = async () => {
+                if (audioContext) {
+                    // Already exists — just try to resume
+                    await tryResumeAudio();
+                    return;
+                }
+                try {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    await audioContext.resume();
+                    createWindAmbience(audioContext);
+                } catch (err) {
+                    console.error('Audio init failed:', err);
                 }
             };
-            document.addEventListener('click', resumeAudio, false);
-            document.addEventListener('touchstart', resumeAudio, false);
 
-            // Handle focus/blur and visibility changes to gracefully pause audio and animations
-            document.addEventListener('visibilitychange', () => {
-                if (!audioContext) return;
+            // User gesture listeners — covers iframe context too
+            ['click', 'touchstart', 'touchend', 'keydown', 'pointerdown'].forEach(evt => {
+                document.addEventListener(evt, startAudio, { once: false, passive: true });
+            });
+
+            // Visibility & focus recovery
+            document.addEventListener('visibilitychange', async () => {
                 if (document.hidden) {
-                    // Page is hidden/minimized - suspend audio and pause animations
                     isWindowActive = false;
-                    if (audioContext.state === 'running') {
-                        audioContext.suspend().catch(err => {
-                            console.error('Failed to suspend audio context:', err);
-                        });
-                    }
                 } else {
-                    // Page is visible/restored - resume audio and animations
                     isWindowActive = true;
-                    if (audioContext.state === 'suspended') {
-                        audioContext.resume().catch(err => {
-                            console.error('Failed to resume audio context:', err);
-                        });
-                    }
+                    await tryResumeAudio();
                 }
             });
 
             window.addEventListener('blur', () => {
-                // Window lost focus
                 isWindowActive = false;
-                if (audioContext && audioContext.state === 'running') {
-                    audioContext.suspend().catch(err => {
-                        console.error('Failed to suspend audio context:', err);
-                    });
-                }
             });
 
             window.addEventListener('focus', () => {
-                // Window regained focus
                 isWindowActive = true;
-                if (audioContext && audioContext.state === 'suspended') {
-                    audioContext.resume().catch(err => {
-                        console.error('Failed to resume audio context:', err);
-                    });
-                }
+                tryResumeAudio();
             });
 
-            // Create wind ambience
-            createWindAmbience(audioContext);
+            window.addEventListener('pageshow', () => tryResumeAudio());
+
+            // iOS-specific: poll for interrupted state
+            setInterval(() => {
+                if (audioContext && (audioContext.state === 'suspended' || audioContext.state === 'interrupted')) {
+                    tryResumeAudio();
+                }
+            }, 2000);
         }
 
-        function createWindAmbience(audioContext) {
-            const now = audioContext.currentTime;
-            const masterGain = audioContext.createGain();
-            masterGain.gain.setValueAtTime(0.08, now); // Slightly lower to keep it subtle
-            masterGain.connect(audioContext.destination);
-
-            // 1. Noise Generator
-            const bufferSize = audioContext.sampleRate * 3;
-            const noiseBuffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
-            const output = noiseBuffer.getChannelData(0);
-            for (let i = 0; i < bufferSize; i++) {
-                output[i] = Math.random() * 2 - 1;
+        async function tryResumeAudio() {
+            if (!audioContext) return;
+            try {
+                if (audioContext.state !== 'running') {
+                    await audioContext.resume();
+                }
+                // If nodes got lost (can happen after interruption), rebuild them
+                if (!windNodes) {
+                    createWindAmbience(audioContext);
+                }
+            } catch (err) {
+                // Context may be in a bad state — try rebuilding entirely
+                try {
+                    await audioContext.close();
+                } catch {}
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                windNodes = null;
+                await audioContext.resume();
+                createWindAmbience(audioContext);
             }
+        }
 
-            const noiseSource = audioContext.createBufferSource();
-            noiseSource.buffer = noiseBuffer;
-            noiseSource.loop = true;
+        function createWindAmbience(ctx) {
+            try {
+                const now = ctx.currentTime;
+                const masterGain = ctx.createGain();
+                masterGain.gain.setValueAtTime(0.08, now);
+                masterGain.connect(ctx.destination);
 
-            // 2. Filter (Lowpass creates the deep muffled roar of wind)
-            const filter = audioContext.createBiquadFilter();
-            filter.type = 'lowpass';
-            filter.frequency.setValueAtTime(600, now); 
-            filter.Q.setValueAtTime(3, now); // Subtle resonance for character
+                const bufferSize = ctx.sampleRate * 3;
+                const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+                const output = noiseBuffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) {
+                    output[i] = Math.random() * 2 - 1;
+                }
 
-            // 3. LFO to modulate the Filter Frequency (creates organic gusts)
-            const lfo = audioContext.createOscillator();
-            lfo.frequency.setValueAtTime(0.08, now); // Very slow rise and fall
-            
-            const lfoGain = audioContext.createGain();
-            lfoGain.gain.setValueAtTime(150, now); // Sweeps the filter by +/- 150Hz
+                const noiseSource = ctx.createBufferSource();
+                noiseSource.buffer = noiseBuffer;
+                noiseSource.loop = true;
 
-            // Audio Graph routing
-            lfo.connect(lfoGain);
-            lfoGain.connect(filter.frequency); // Modulate pitch, not volume
+                const filter = ctx.createBiquadFilter();
+                filter.type = 'lowpass';
+                filter.frequency.setValueAtTime(600, now);
+                filter.Q.setValueAtTime(3, now);
 
-            noiseSource.connect(filter);
-            filter.connect(masterGain);
+                const lfo = ctx.createOscillator();
+                lfo.frequency.setValueAtTime(0.08, now);
 
-            noiseSource.start(now);
-            lfo.start(now);
+                const lfoGain = ctx.createGain();
+                lfoGain.gain.setValueAtTime(150, now);
+
+                lfo.connect(lfoGain);
+                lfoGain.connect(filter.frequency);
+                noiseSource.connect(filter);
+                filter.connect(masterGain);
+
+                noiseSource.start(now);
+                lfo.start(now);
+
+                // Track nodes so we can detect if they've been lost
+                windNodes = { noiseSource, filter, lfo, lfoGain, masterGain };
+
+                // Rebuild when the source naturally ends (shouldn't happen with loop=true,
+                // but catches edge cases after interruption)
+                noiseSource.onended = () => {
+                    windNodes = null;
+                };
+            } catch (err) {
+                console.error('Wind ambience creation failed:', err);
+                windNodes = null;
+            }
         }
 
         function onWindowResize() {
