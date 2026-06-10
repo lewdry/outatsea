@@ -7,14 +7,6 @@ As a result, I would spend a fair bit of my non-work time out on deck just stari
 
 Out at Sea is a dumb web experiment but also possibly a way for me to step back into the specific in-between moment I found myself in 11 years ago. It is a quiet digital space meant for pausing and letting your mind drift.
 
-<iframe 
-    src="https://lewdry.github.io/outatsea/" 
-    width="100%" 
-    height="400px" 
-    style="border: none;"
-    allow="autoplay">
-</iframe>
-
 Most of this code is out-of-the-box [three.js](https://threejs.org). I am thankful for the countless thousands of person-hours which have gone into building common-good open source software like this. I am also continually impressed by what is possible and achievable in modern browsers. 
 
 #### Interaction
