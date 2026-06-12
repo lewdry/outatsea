@@ -68,9 +68,15 @@
         let sunElevation = 165;
         let isDragging = false;
         let previousMousePosition = { x: 0, y: 0 };
+        const keysHeld = new Set();
         let audioContext = null;
         let isWindowActive = true;
         let windNodes = null;
+        
+        // Frame rate variables
+        const clock = new THREE.Clock();
+        let delta = 0;
+        const interval = 1 / 60; // 60fps target
 
         init();
         animate();
@@ -142,6 +148,10 @@
 
             // 7. Handle Window Resizing
             window.addEventListener('resize', onWindowResize);
+
+            // 3.6. Keyboard Controls
+            window.addEventListener('keydown', onKeyDown, false);
+            window.addEventListener('keyup', onKeyUp, false);
 
             // 8. Initialize Ambient Audio (Algorithmic)
             initAudio();
@@ -279,7 +289,16 @@
 
         function animate() {
             requestAnimationFrame(animate);
-            render();
+            
+            // Accumulate time since last frame
+            delta += clock.getDelta();
+            
+            // Only render if enough time has passed for 60fps
+            if (delta > interval) {
+                render(delta);
+                // Reduce delta by the interval, preserving any remainder to prevent drift
+                delta = delta % interval;
+            }
         }
 
         function updateSunPosition() {
@@ -299,14 +318,32 @@
             }
         }
 
-        function render() {
-            if (!isWindowActive) return; // Skip rendering if window is inactive
-            
-            // Rotate the camera around its own vertical axis based on input drag
+        function onKeyDown(event) {
+            if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
+                event.preventDefault();
+                keysHeld.add(event.key);
+            }
+        }
+
+        function onKeyUp(event) {
+            keysHeld.delete(event.key);
+        }
+
+        function render(deltaTime) {
+            if (!isWindowActive) return;
+
+            // Arrow key panning and sun control
+            if (keysHeld.size > 0) {
+                if (keysHeld.has('ArrowLeft'))  horizontalAngle += 0.02;
+                if (keysHeld.has('ArrowRight')) horizontalAngle -= 0.02;
+                if (keysHeld.has('ArrowUp'))    { sunElevation += 1.0; sunElevation = Math.min(180, sunElevation); updateSunPosition(); }
+                if (keysHeld.has('ArrowDown'))  { sunElevation -= 1.0; sunElevation = Math.max(0, sunElevation);   updateSunPosition(); }
+            }
+
             camera.rotation.set(0, horizontalAngle, 0, 'YXZ');
             
-            // Animates the normal map texture to create the moving wave effect
-            water.material.uniforms['time'].value += 1.0 / 60.0;
+            // Use actual delta time, scaled down to keep ripple speed consistent
+            water.material.uniforms['time'].value += deltaTime * 0.5;
             renderer.render(scene, camera);
         }
 
